@@ -1,5 +1,6 @@
 use anyhow::{Result, ensure, bail};
 use std::fs::File;
+use rayon::prelude::*;
 
 fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
     let mut cie = [0.; 3];
@@ -168,7 +169,7 @@ fn main() -> Result<()> {
     reader.next_frame(&mut buf)?;
 
     // Palettize
-    for px in buf.chunks_exact_mut(n_components) {
+    buf.par_chunks_exact_mut(n_components).for_each(|px| {
         let rgb = [px[0], px[1], px[2]];
         let lab = px_to_cielab(rgb);
         let mut best_dist = std::f32::MAX;
@@ -183,7 +184,7 @@ fn main() -> Result<()> {
         px[0] = best_match[0];
         px[1] = best_match[1];
         px[2] = best_match[2];
-    }
+    });
 
     // Encode and write
     let mut encoder = png::Encoder::new(File::create("out.png")?, info.width, info.height);
