@@ -1,7 +1,15 @@
-use std::f32::consts::PI;
+use anyhow::{Result, ensure, bail};
+use std::fs::File;
 
-fn srgb_to_ciexyz(rgb: [f32; 3]) -> [f32; 3] {
+fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
     let mut cie = [0.; 3];
+
+    let gamma_expand = |u: f32| if u < 0.04045 {
+        u / 12.92
+    } else {
+        ((u + 0.055) / 1.055).powf(2.4)
+    };
+
     // https://en.wikipedia.org/wiki/SRGB#The_reverse_transformation
     const MATRIX: [[f32; 3]; 3] = [
         [0.41239080, 0.35758434, 0.18048079],
@@ -9,9 +17,10 @@ fn srgb_to_ciexyz(rgb: [f32; 3]) -> [f32; 3] {
         [0.01933082, 0.11919478, 0.95053215],
     ];
 
-    for (cie, (rgb, row)) in cie.iter_mut().zip(rgb.iter().zip(MATRIX.iter())) {
+    for (cie, (srgb, row)) in cie.iter_mut().zip(srgb.iter().zip(MATRIX.iter())) {
+        let rgb = gamma_expand(*srgb);
         for m in row {
-            *cie += *rgb * m;
+            *cie += rgb * m;
         }
     }
     cie
@@ -25,12 +34,12 @@ fn ciexyz_to_cielab([x, y, z]: [f32; 3]) -> [f32; 3] {
         if t > delta.powf(3.) {
             t.cbrt()
         } else {
-            (t / (3. * delta)) + (4. / 29.)
+            (t / (3. * delta.powf(2.))) + (4. / 29.)
         }
     };
 
     let f_y_yn = f(y / yn);
-    let l = 116. * f_y_yn - 16.;
+    let l = (116. * f_y_yn) - 16.;
     let a = 500. * (f(x / xn) - f_y_yn);
     let b = 200. * (f_y_yn - f(z / zn));
     [l, a, b]
@@ -106,8 +115,7 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
         (h1 + h2 - 360.) / 2.
     };
 
-    let t = 1. 
-        - 0.17 * (h_bar - 30.).to_radians().cos()
+    let t = 1. - 0.17 * (h_bar - 30.).to_radians().cos()
         + 0.24 * (2. * h_bar).to_radians().cos()
         + 0.32 * (3. * h_bar + 6.).to_radians().cos()
         - 0.20 * (4. * h_bar - 63.).to_radians().cos();
@@ -122,37 +130,62 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let sh = 1. + 0.015 * c_bar * t;
     let rt = -(2. * delta_theta).to_radians().sin() * rc;
 
-    dbg!(
-        ai(a1), 
-        ai(a2),
-        c1,
-        c2,
-        h1,
-        h2,
-        h_bar,
-        g,
-        t,
-        sl,
-        sc,
-        sh,
-        rt
-    );
+    // For debugging!
+    // dbg!(ai(a1), ai(a2), c1, c2, h1, h2, h_bar, g, t, sl, sc, sh, rt);
 
-    (
-        (dl / sl).powf(2.)
-            + (dc / sc).powf(2.)
-            + (dh_2 / sh).powf(2.)
-            + (rt * (dc / sc) * (dh_2 / sh))
-    ).sqrt()
+    ((dl / sl).powf(2.)
+        + (dc / sc).powf(2.)
+        + (dh_2 / sh).powf(2.)
+        + (rt * (dc / sc) * (dh_2 / sh)))
+        .sqrt()
 }
 
-fn main() {
-    //let args = std::env::args().skip(1);
-    //let palette: Vec<[f32; 3]> = args.map(|s| px_to_cielab(parse_hex_color(&s))).collect();
-    let a = [50., 2.5, 0.];
-    let b = [73., 25., -18.];
-    let diff = ciede2000_diff(a, b); // #17
-    dbg!(diff);
+fn main() -> Result<()> {
+    // Arg parsing
+    let mut args = std::env::args().skip(1);
+    let image_path = args.next().expect("Requires image path arg first");
+
+    let palette: Vec<[u8; 3]> = args.map(|s| parse_hex_color(&s)).collect();
+    let palette_cie: Vec<[f32; 3]> = palette.iter().copied().map(px_to_cielab).collect();
+
+    // PNG decode
+    let decoder = png::Decoder::new(File::open(image_path)?);
+    let (info, mut reader) = decoder.read_info()?;
+
+    ensure!(info.bit_depth == png::BitDepth::Eight, "Only eight-bit images are supported");
+    let n_components = match info.color_type {
+        png::ColorType::RGB => 3,
+        png::ColorType::RGBA => 4,
+        ty => bail!("Unsupported color type {:?}", ty),
+    };
+
+    let mut buf = vec![0; info.buffer_size()];
+    reader.next_frame(&mut buf)?;
+
+    for px in buf.chunks_exact_mut(n_components) {
+        let rgb = [px[0], px[1], px[2]];
+        let lab = px_to_cielab(rgb);
+        let mut best_dist = std::f32::MAX;
+        let mut best_match = palette[0];
+        for (idx, pal) in palette_cie.iter().enumerate() {
+            let dist = ciede2000_diff(lab, *pal);
+            if dist < best_dist {
+                best_match = palette[idx];
+                best_dist = dist;
+            }
+        }
+        px[0] = best_match[0];
+        px[1] = best_match[1];
+        px[2] = best_match[2];
+    }
+
+    let mut encoder = png::Encoder::new(File::create("out.png")?, info.width, info.height);
+    encoder.set_color(info.color_type);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+    writer.write_image_data(&buf)?;
+
+    Ok(())
 }
 
 #[test]
@@ -169,9 +202,21 @@ fn test_ciede2000_diff() {
         assert!((a - b).abs() < 1e-4, "{} != {}", a, b);
     }
 
-    epsilon(ciede2000_diff([50., 2.6772, -79.7751], [50., 0., -82.7485]), 2.0425);
-    epsilon(ciede2000_diff([50., 0., -82.7485], [50., 2.6772, -79.7751]), 2.0425);
+    epsilon(
+        ciede2000_diff([50., 2.6772, -79.7751], [50., 0., -82.7485]),
+        2.0425,
+    );
+    epsilon(
+        ciede2000_diff([50., 0., -82.7485], [50., 2.6772, -79.7751]),
+        2.0425,
+    );
     epsilon(ciede2000_diff([73., 25., -18.], [50., 2.5, 0.]), 27.1492);
-    epsilon(ciede2000_diff([22.7233, 20.0904, -46.6940], [23.0331, 14.9730, -42.5619]), 2.0373);
-    epsilon(ciede2000_diff([90.8027, -2.0831, 1.4410], [91.1528, -1.6435, 0.0447]), 1.4441);
+    epsilon(
+        ciede2000_diff([22.7233, 20.0904, -46.6940], [23.0331, 14.9730, -42.5619]),
+        2.0373,
+    );
+    epsilon(
+        ciede2000_diff([90.8027, -2.0831, 1.4410], [91.1528, -1.6435, 0.0447]),
+        1.4441,
+    );
 }

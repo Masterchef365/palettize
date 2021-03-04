@@ -1,0 +1,1 @@
+time cargo run --release smol.png 000000 005e41 043139 07b13a 1730a7 1e080d 278fdc 343558 676a72 720c0d 813604 841152 de9651 e8fe75 ecaa10 fbbd82 fefeff
