@@ -92,7 +92,7 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
         hdiff + 360.
     };
 
-    let dh_2 = 2. * cc.sqrt() * (dh / 2.).sin();
+    let dh_2 = 2. * cc.sqrt() * (dh / 2.).to_radians().sin();
 
     let l_bar = (l1 + l2) / 2.;
     let c_bar = (c1 + c2) / 2.;
@@ -122,13 +122,11 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let sh = 1. + 0.015 * c_bar * t;
     let rt = -(2. * delta_theta).to_radians().sin() * rc;
 
-    dbg!(sl, sc, sh, rt);
-
     (
         (dl / sl).powf(2.)
             + (dc / sc).powf(2.)
             + (dh_2 / sh).powf(2.)
-            + (rt * (dc / sc) * (dh / sh))
+            + (rt * (dc / sc) * (dh_2 / sh))
     ).sqrt()
 }
 
