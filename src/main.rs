@@ -17,10 +17,14 @@ fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
         [0.01933082, 0.11919478, 0.95053215],
     ];
 
-    for (cie, (srgb, row)) in cie.iter_mut().zip(srgb.iter().zip(MATRIX.iter())) {
-        let rgb = gamma_expand(*srgb);
-        for m in row {
-            *cie += rgb * m;
+    let rgb = [
+        gamma_expand(srgb[0]),
+        gamma_expand(srgb[1]),
+        gamma_expand(srgb[2]),
+    ];
+    for (cie, row) in cie.iter_mut().zip(MATRIX.iter()) {
+        for (rgb, entry) in rgb.iter().zip(row.iter()) {
+            *cie += rgb * entry;
         }
     }
     cie
@@ -64,6 +68,7 @@ fn parse_hex_color(s: &str) -> [u8; 3] {
     ]
 }
 
+// https://en.wikipedia.org/wiki/Color_difference#CIEDE2000
 fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let euclid_dist = |a: f32, b: f32| (a * a + b * b).sqrt();
     let c_ab = (euclid_dist(a1, b1) + euclid_dist(a2, b2)) / 2.;
@@ -162,6 +167,7 @@ fn main() -> Result<()> {
     let mut buf = vec![0; info.buffer_size()];
     reader.next_frame(&mut buf)?;
 
+    // Palettize
     for px in buf.chunks_exact_mut(n_components) {
         let rgb = [px[0], px[1], px[2]];
         let lab = px_to_cielab(rgb);
@@ -179,6 +185,7 @@ fn main() -> Result<()> {
         px[2] = best_match[2];
     }
 
+    // Encode and write
     let mut encoder = png::Encoder::new(File::create("out.png")?, info.width, info.height);
     encoder.set_color(info.color_type);
     encoder.set_depth(png::BitDepth::Eight);
