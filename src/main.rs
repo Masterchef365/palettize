@@ -59,7 +59,7 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let euclid_dist = |a: f32, b: f32| (a * a + b * b).sqrt();
     let c_ab = (euclid_dist(a1, b1) + euclid_dist(a2, b2)) / 2.;
     let c_ab_7 = c_ab.powf(7.);
-    let g = 0.5 * (1. - (c_ab_7 / (c_ab_7 + 25.0f32.powf(7.))));
+    let g = 0.5 * (1. - (c_ab_7 / (c_ab_7 + 25.0f32.powf(7.))).sqrt());
 
     let ai = |a: f32| (1. + g) * a;
     let ci = |a: f32, b: f32| euclid_dist(ai(a), b);
@@ -122,6 +122,22 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let sh = 1. + 0.015 * c_bar * t;
     let rt = -(2. * delta_theta).to_radians().sin() * rc;
 
+    dbg!(
+        ai(a1), 
+        ai(a2),
+        c1,
+        c2,
+        h1,
+        h2,
+        h_bar,
+        g,
+        t,
+        sl,
+        sc,
+        sh,
+        rt
+    );
+
     (
         (dl / sl).powf(2.)
             + (dc / sc).powf(2.)
@@ -133,9 +149,9 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
 fn main() {
     //let args = std::env::args().skip(1);
     //let palette: Vec<[f32; 3]> = args.map(|s| px_to_cielab(parse_hex_color(&s))).collect();
-    let a = [50., 2.6772, -79.7751];
-    let b = [50., 0., -82.7485];
-    let diff = ciede2000_diff(a, b);
+    let a = [50., 2.5, 0.];
+    let b = [73., 25., -18.];
+    let diff = ciede2000_diff(a, b); // #17
     dbg!(diff);
 }
 
@@ -144,4 +160,16 @@ fn test_parse_hex_color() {
     assert_eq!(parse_hex_color("00AF00"), [0x00, 0xAF, 0x00]);
     assert_eq!(parse_hex_color("00AFBB"), [0x00, 0xAF, 0xBB]);
     assert_eq!(parse_hex_color("EEAF00"), [0xEE, 0xAF, 0x00]);
+}
+
+#[test]
+fn test_ciede2000_diff() {
+    #[track_caller]
+    fn epsilon(a: f32, b: f32) {
+        assert!((a - b).abs() < 1e-4, "{} != {}", a, b);
+    }
+
+    epsilon(ciede2000_diff([50., 2.6772, -79.7751], [50., 0., -82.7485]), 2.0425);
+    epsilon(ciede2000_diff([50., 0., -82.7485], [50., 2.6772, -79.7751]), 2.0425);
+    epsilon(ciede2000_diff([73., 25., -18.], [50., 2.5, 0.]), 27.1492);
 }
