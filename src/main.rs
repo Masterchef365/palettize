@@ -116,7 +116,7 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let rc = 2. * (c_bar.powf(7.) / (c_bar.powf(7.) + 25.0f32.powf(7.))).sqrt();
 
     let lbsq = (l_bar - 50.).powf(2.);
-    let sl = 1. + ((0.0015 * lbsq) / (20. + lbsq).sqrt());
+    let sl = 1. + ((0.015 * lbsq) / (20. + lbsq).sqrt());
 
     let sc = 1. + 0.045 * c_bar;
     let sh = 1. + 0.015 * c_bar * t;
