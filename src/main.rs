@@ -112,16 +112,17 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
         + 0.32 * (3. * h_bar + 6.).to_radians().cos()
         - 0.20 * (4. * h_bar - 63.).to_radians().cos();
 
-    dbg!(t);
-
-    let delta_theta = 30. * ((h_bar - 275.) / 25.).exp();
+    let delta_theta = 30. * (-((h_bar - 275.) / 25.).powf(2.)).exp();
     let rc = 2. * (c_bar.powf(7.) / (c_bar.powf(7.) + 25.0f32.powf(7.))).sqrt();
+
     let lbsq = (l_bar - 50.).powf(2.);
     let sl = 1. + ((0.0015 * lbsq) / (20. + lbsq).sqrt());
 
     let sc = 1. + 0.045 * c_bar;
     let sh = 1. + 0.015 * c_bar * t;
     let rt = -(2. * delta_theta).to_radians().sin() * rc;
+
+    dbg!(sl, sc, sh, rt);
 
     (
         (dl / sl).powf(2.)
