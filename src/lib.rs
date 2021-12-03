@@ -1,8 +1,4 @@
-use anyhow::{Result, ensure, bail};
-use std::fs::File;
-use rayon::prelude::*;
-
-fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
+pub fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
     let mut cie = [0.; 3];
 
     let gamma_expand = |u: f32| if u < 0.04045 {
@@ -31,7 +27,7 @@ fn srgb_to_ciexyz(srgb: [f32; 3]) -> [f32; 3] {
     cie
 }
 
-fn ciexyz_to_cielab([x, y, z]: [f32; 3]) -> [f32; 3] {
+pub fn ciexyz_to_cielab([x, y, z]: [f32; 3]) -> [f32; 3] {
     // https://en.wikipedia.org/wiki/CIELAB_color_space#From_CIEXYZ_to_CIELAB[11]
     let [xn, yn, zn]: [f32; 3] = [95.0489, 100., 108.8840];
     let delta: f32 = 6. / 29.;
@@ -55,11 +51,11 @@ fn to_float([r, g, b]: [u8; 3]) -> [f32; 3] {
     [f(r), f(g), f(b)]
 }
 
-fn px_to_cielab(rgb: [u8; 3]) -> [f32; 3] {
+pub fn px_to_cielab(rgb: [u8; 3]) -> [f32; 3] {
     ciexyz_to_cielab(srgb_to_ciexyz(to_float(rgb)))
 }
 
-fn parse_hex_color(s: &str) -> [u8; 3] {
+pub fn parse_hex_color(s: &str) -> [u8; 3] {
     let s = s.trim_start_matches('#');
     let v = u32::from_str_radix(s, 16).expect(s);
     [
@@ -70,7 +66,7 @@ fn parse_hex_color(s: &str) -> [u8; 3] {
 }
 
 // https://en.wikipedia.org/wiki/Color_difference#CIEDE2000
-fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
+pub fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
     let euclid_dist = |a: f32, b: f32| (a * a + b * b).sqrt();
     let c_ab = (euclid_dist(a1, b1) + euclid_dist(a2, b2)) / 2.;
     let c_ab_7 = c_ab.powf(7.);
@@ -146,55 +142,6 @@ fn ciede2000_diff([l1, a1, b1]: [f32; 3], [l2, a2, b2]: [f32; 3]) -> f32 {
         .sqrt()
 }
 
-fn main() -> Result<()> {
-    // Arg parsing
-    let mut args = std::env::args().skip(1);
-    let image_path = args.next().expect("Requires image path arg first");
-
-    let palette: Vec<[u8; 3]> = args.map(|s| parse_hex_color(&s)).collect();
-    let palette_cie: Vec<[f32; 3]> = palette.iter().copied().map(px_to_cielab).collect();
-
-    // PNG decode
-    let decoder = png::Decoder::new(File::open(image_path)?);
-    let (info, mut reader) = decoder.read_info()?;
-
-    ensure!(info.bit_depth == png::BitDepth::Eight, "Only eight-bit images are supported");
-    let n_components = match info.color_type {
-        png::ColorType::RGB => 3,
-        png::ColorType::RGBA => 4,
-        ty => bail!("Unsupported color type {:?}", ty),
-    };
-
-    let mut buf = vec![0; info.buffer_size()];
-    reader.next_frame(&mut buf)?;
-
-    // Palettize
-    buf.par_chunks_exact_mut(n_components).for_each(|px| {
-        let rgb = [px[0], px[1], px[2]];
-        let lab = px_to_cielab(rgb);
-        let mut best_dist = std::f32::MAX;
-        let mut best_match = palette[0];
-        for (idx, pal) in palette_cie.iter().enumerate() {
-            let dist = ciede2000_diff(lab, *pal);
-            if dist < best_dist {
-                best_match = palette[idx];
-                best_dist = dist;
-            }
-        }
-        px[0] = best_match[0];
-        px[1] = best_match[1];
-        px[2] = best_match[2];
-    });
-
-    // Encode and write
-    let mut encoder = png::Encoder::new(File::create("out.png")?, info.width, info.height);
-    encoder.set_color(info.color_type);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().unwrap();
-    writer.write_image_data(&buf)?;
-
-    Ok(())
-}
 
 #[test]
 fn test_parse_hex_color() {
